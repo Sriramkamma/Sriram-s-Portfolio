@@ -8,14 +8,15 @@ import { ContactSection } from "../components/ContactSection";
 import { SkillsSection } from "../components/SkillsSection";
 import { ProjectsSection } from "../components/ProjectsSection";
 import { Footer } from "../components/Footer";
-
-
+import { AIAssistant } from "../components/AIAssistant";
 
 export const Home = () => {
   return (
     <div className="min-h-screen bg-background text-foreground overflow-x-hidden">
       <ThemeToggle />
+
       <StarBackground />
+
       <Navbar />
 
       <main>
@@ -25,8 +26,10 @@ export const Home = () => {
         <SkillsSection />
         <ProjectsSection />
         <ContactSection />
-        <Footer/>
+        <Footer />
       </main>
+
+      <AIAssistant />
     </div>
   );
 };
