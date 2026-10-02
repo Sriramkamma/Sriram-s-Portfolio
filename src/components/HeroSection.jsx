@@ -32,7 +32,7 @@ export const HeroSection = () => {
 
           <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto opacity-0 animate-fade-in-delay-3">
             
-            Cybersecurity professional with hands-on experience in threat intelligence, ISO/IEC 27001 compliance, security audits, risk assessments, and SOC operations. Passionate about leveraging AI-driven security analytics and automation to strengthen organizational security, enhance threat detection, and build resilient, future-ready security solutions.
+            Cybersecurity professional with hands-on experience in threat intelligence, ISO/IEC 27001 and ISO/IEC 42001 compliance, security audits, risk assessments, and SOC operations. Passionate about leveraging AI-driven security analytics and automation to strengthen organizational security, enhance threat detection, and build resilient, future-ready security solutions.
           </p>
 
           <div className="pt-4 opacity-0 animate-fade-in-delay-4">

@@ -197,7 +197,7 @@ export const AIAssistant = () => {
     } catch (error) {
       console.error(error);
 
-      const fallback =
+      const fallback = error?.message ||
         "I'm having trouble connecting to the AI assistant right now. Please try again in a moment.";
 
       setMessages((previous) => [

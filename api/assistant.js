@@ -1,11 +1,12 @@
 import { GoogleGenAI } from "@google/genai";
+import process from "node:process";
 import { portfolioData } from "../src/data/portfolioData.js";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
 
-const MODEL = "gemini-2.5-flash";
+const MODEL = "gemini-3.8-flash";
 
 function buildPortfolioContext() {
   return JSON.stringify(portfolioData, null, 2);
@@ -106,10 +107,12 @@ Answer the visitor naturally and concisely.
   } catch (error) {
     console.error("Gemini assistant error:", error);
 
-    return res.status(500).json({
-      error:
-        error?.message ||
-        "Something went wrong while contacting the AI assistant.",
+    const isTemporarilyUnavailable = error?.status === 503;
+
+    return res.status(isTemporarilyUnavailable ? 503 : 500).json({
+      error: isTemporarilyUnavailable
+        ? "The AI service is busy right now. Please try again shortly."
+        : "Something went wrong while contacting the AI assistant.",
     });
   }
 }
