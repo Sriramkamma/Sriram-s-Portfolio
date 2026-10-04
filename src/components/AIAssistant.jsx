@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+
 import {
   Bot,
   ChevronDown,
@@ -11,6 +12,7 @@ import {
   Volume2,
   VolumeX,
   X,
+  Play,
 } from "lucide-react";
 
 const QUICK_PROMPTS = [
@@ -26,7 +28,7 @@ export const AIAssistant = () => {
   const [isThinking, setIsThinking] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
-
+  const lastSubmittedSpeechRef = useRef("");
   const [input, setInput] = useState("");
 
   const [messages, setMessages] = useState([
@@ -38,6 +40,17 @@ export const AIAssistant = () => {
   ]);
 
   const recognitionRef = useRef(null);
+  const messagesRef = useRef(messages);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  /*
+   * ---------------------------------------------------------
+   * VOICE INPUT
+   * ---------------------------------------------------------
+   */
 
   useEffect(() => {
     const SpeechRecognition =
@@ -67,49 +80,222 @@ export const AIAssistant = () => {
     };
 
     recognition.onresult = (event) => {
-      const transcript =
-        event.results?.[0]?.[0]?.transcript || "";
+      let finalTranscript = "";
+      let interimTranscript = "";
 
-      if (transcript.trim()) {
-        setInput(transcript);
-        sendMessage(transcript);
+      for (
+        let i = event.resultIndex;
+        i < event.results.length;
+        i++
+      ) {
+        const transcript =
+          event.results[i][0].transcript;
+
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+
+      // Show partial speech in the input box,
+      // but DO NOT send it to the API.
+      if (interimTranscript) {
+        setInput(interimTranscript);
+      }
+
+      // Only send the completed sentence.
+      if (finalTranscript.trim()) {
+        const completedMessage =
+          finalTranscript.trim();
+
+        if (
+          completedMessage ===
+          lastSubmittedSpeechRef.current
+        ) {
+          return;
+        }
+
+        lastSubmittedSpeechRef.current =
+          completedMessage;
+
+        setInput(completedMessage);
+
+        setTimeout(() => {
+          sendMessage(completedMessage);
+        }, 0);
       }
     };
 
     recognitionRef.current = recognition;
 
     return () => {
-      recognition.stop();
+      try {
+        recognition.stop();
+      } catch {
+        // Ignore cleanup errors.
+      }
     };
   }, []);
 
+  /*
+   * ---------------------------------------------------------
+   * VOICE OUTPUT / TEXT TO SPEECH
+   * ---------------------------------------------------------
+   *
+   * Browser voices may load asynchronously.
+   * We therefore:
+   * 1. Cancel previous speech.
+   * 2. Get available voices.
+   * 3. Prefer English-India.
+   * 4. Fall back to another English voice.
+   * 5. Wait for voiceschanged if voices are not ready.
+   * 6. Resume the speech engine if it is paused.
+   */
+
   const speak = (text) => {
-    if (!voiceEnabled || !("speechSynthesis" in window)) {
+    if (
+      !("speechSynthesis" in window) ||
+      !text
+    ) {
+      if (!("speechSynthesis" in window)) {
+        console.warn("Speech output is not supported in this browser.");
+      }
       return;
     }
 
-    window.speechSynthesis.cancel();
+    const synth = window.speechSynthesis;
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    // Stop any previous speech.
+    synth.cancel();
 
-    utterance.lang = "en-IN";
-    utterance.rate = 1;
-    utterance.pitch = 1;
+    let hasSpoken = false;
 
-    utterance.onstart = () => {
-      setIsSpeaking(true);
+    const speakNow = () => {
+      if (hasSpoken) {
+        return;
+      }
+
+      hasSpoken = true;
+
+      // Make sure the browser speech engine is not paused.
+      try {
+        synth.resume();
+      } catch {
+        // Ignore resume errors.
+      }
+
+      const utterance =
+        new window.SpeechSynthesisUtterance(text);
+
+      const voices = synth.getVoices();
+
+      // Prefer Indian English.
+      const indianEnglishVoice = voices.find(
+        (voice) =>
+          voice.lang &&
+          voice.lang
+            .toLowerCase()
+            .startsWith("en-in")
+      );
+
+      // Otherwise use any English voice.
+      const englishVoice =
+        voices.find(
+          (voice) =>
+            voice.lang &&
+            voice.lang
+              .toLowerCase()
+              .startsWith("en")
+        ) || null;
+
+      const selectedVoice =
+        indianEnglishVoice ||
+        englishVoice ||
+        voices[0] ||
+        null;
+
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+        utterance.lang = selectedVoice.lang;
+      } else {
+        utterance.lang = "en-IN";
+      }
+
+      utterance.rate = 1;
+      utterance.pitch = 1;
+      utterance.volume = 1;
+
+      utterance.onstart = () => {
+        setIsSpeaking(true);
+      };
+
+      utterance.onend = () => {
+        setIsSpeaking(false);
+      };
+
+      utterance.onerror = (event) => {
+        console.error(
+          "Speech synthesis error:",
+          event
+        );
+        setIsSpeaking(false);
+      };
+
+      try {
+        synth.speak(utterance);
+      } catch (error) {
+        console.error(
+          "Unable to start speech synthesis:",
+          error
+        );
+        setIsSpeaking(false);
+      }
     };
 
-    utterance.onend = () => {
-      setIsSpeaking(false);
+    /*
+     * Some browsers return an empty voice list
+     * during the first call to getVoices().
+     */
+    const voices = synth.getVoices();
+
+    if (voices.length > 0) {
+      speakNow();
+      return;
+    }
+
+    /*
+     * Wait for the browser to load its voices.
+     */
+    const handleVoicesChanged = () => {
+      speakNow();
+      synth.removeEventListener(
+        "voiceschanged",
+        handleVoicesChanged
+      );
     };
 
-    utterance.onerror = () => {
-      setIsSpeaking(false);
-    };
+    synth.addEventListener(
+      "voiceschanged",
+      handleVoicesChanged
+    );
 
-    window.speechSynthesis.speak(utterance);
+    /*
+     * Fallback for browsers where voiceschanged
+     * does not fire.
+     */
+    setTimeout(() => {
+      if (!hasSpoken) {
+        speakNow();
+      }
+    }, 1000);
   };
+
+  /*
+   * ---------------------------------------------------------
+   * START / STOP VOICE INPUT
+   * ---------------------------------------------------------
+   */
 
   const startListening = () => {
     if (!recognitionRef.current) {
@@ -120,7 +306,12 @@ export const AIAssistant = () => {
     }
 
     if (isListening) {
-      recognitionRef.current.stop();
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // Ignore duplicate stop errors.
+      }
+
       return;
     }
 
@@ -133,8 +324,16 @@ export const AIAssistant = () => {
     }
   };
 
+  /*
+   * ---------------------------------------------------------
+   * SEND MESSAGE
+   * ---------------------------------------------------------
+   */
+
   const sendMessage = async (messageOverride) => {
-    const message = (messageOverride ?? input).trim();
+    const message = (
+      messageOverride ?? input
+    ).trim();
 
     if (!message || isThinking) {
       return;
@@ -155,29 +354,33 @@ export const AIAssistant = () => {
     setIsThinking(true);
 
     try {
-      const conversation = messages
+      const conversation = messagesRef.current
         .slice(-8)
         .map((item) => ({
           role: item.role,
           content: item.content,
         }));
 
-      const response = await fetch("/api/assistant", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          message,
-          conversation,
-        }),
-      });
+      const response = await fetch(
+        "/api/assistant",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            message,
+            conversation,
+          }),
+        }
+      );
 
       const data = await response.json();
 
       if (!response.ok) {
         throw new Error(
-          data?.error || "Assistant request failed."
+          data?.error ||
+            "Assistant request failed."
         );
       }
 
@@ -193,11 +396,13 @@ export const AIAssistant = () => {
         },
       ]);
 
-      speak(answer);
+      // Speak the AI response when voice output is enabled.
+      if (voiceEnabled) speak(answer);
     } catch (error) {
       console.error(error);
 
-      const fallback = error?.message ||
+      const fallback =
+        error?.message ||
         "I'm having trouble connecting to the AI assistant right now. Please try again in a moment.";
 
       setMessages((previous) => [
@@ -208,16 +413,29 @@ export const AIAssistant = () => {
         },
       ]);
 
-      speak(fallback);
+      // Speak the error response when voice output is enabled.
+      if (voiceEnabled) speak(fallback);
     } finally {
       setIsThinking(false);
     }
   };
 
+  /*
+   * ---------------------------------------------------------
+   * FORM SUBMIT
+   * ---------------------------------------------------------
+   */
+
   const handleSubmit = (event) => {
     event.preventDefault();
     sendMessage();
   };
+
+  /*
+   * ---------------------------------------------------------
+   * NAVIGATION
+   * ---------------------------------------------------------
+   */
 
   const scrollToSection = (sectionId) => {
     setIsOpen(false);
@@ -228,6 +446,12 @@ export const AIAssistant = () => {
         behavior: "smooth",
       });
   };
+
+  /*
+   * ---------------------------------------------------------
+   * UI
+   * ---------------------------------------------------------
+   */
 
   return (
     <>
@@ -260,6 +484,7 @@ export const AIAssistant = () => {
               <div className="flex items-center gap-3">
                 <div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
                   <span className="absolute inset-0 rounded-full bg-primary/10 animate-ping" />
+
                   <Bot className="relative h-5 w-5" />
                 </div>
 
@@ -281,11 +506,24 @@ export const AIAssistant = () => {
               </div>
 
               <div className="flex items-center gap-1">
+                {/* Voice toggle */}
                 <button
                   type="button"
-                  onClick={() =>
-                    setVoiceEnabled((previous) => !previous)
-                  }
+                  onClick={() => {
+                    setVoiceEnabled(
+                      (previous) => {
+                        const next =
+                          !previous;
+
+                        if (!next) {
+                          window.speechSynthesis?.cancel();
+                          setIsSpeaking(false);
+                        }
+
+                        return next;
+                      }
+                    );
+                  }}
                   className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
                   aria-label={
                     voiceEnabled
@@ -300,6 +538,7 @@ export const AIAssistant = () => {
                   )}
                 </button>
 
+                {/* Close */}
                 <button
                   type="button"
                   onClick={() => {
@@ -333,7 +572,23 @@ export const AIAssistant = () => {
                         : "max-w-[88%] rounded-2xl rounded-bl-md border border-border bg-card px-4 py-3 text-sm text-foreground"
                     }
                   >
-                    {message.content}
+                    <div>{message.content}</div>
+                    {message.role === "assistant" && (
+                      <button
+                        type="button"
+                        onClick={() => speak(message.content)}
+                        disabled={
+                          !voiceEnabled ||
+                          !("speechSynthesis" in window)
+                        }
+                        className="mt-2 inline-flex items-center gap-1 rounded-full text-xs text-muted-foreground transition-colors hover:text-primary disabled:opacity-50"
+                        aria-label="Play assistant response aloud"
+                        title="Play this response aloud"
+                      >
+                        <Play className="h-3 w-3" />
+                        Play aloud
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -356,16 +611,20 @@ export const AIAssistant = () => {
                 </p>
 
                 <div className="flex gap-2 overflow-x-auto pb-1">
-                  {QUICK_PROMPTS.map((prompt) => (
-                    <button
-                      key={prompt}
-                      type="button"
-                      onClick={() => sendMessage(prompt)}
-                      className="shrink-0 rounded-full border border-border bg-card px-3 py-2 text-xs transition-colors hover:border-primary/50 hover:text-primary"
-                    >
-                      {prompt}
-                    </button>
-                  ))}
+                  {QUICK_PROMPTS.map(
+                    (prompt) => (
+                      <button
+                        key={prompt}
+                        type="button"
+                        onClick={() =>
+                          sendMessage(prompt)
+                        }
+                        className="shrink-0 rounded-full border border-border bg-card px-3 py-2 text-xs transition-colors hover:border-primary/50 hover:text-primary"
+                      >
+                        {prompt}
+                      </button>
+                    )
+                  )}
                 </div>
               </div>
             )}
@@ -376,6 +635,7 @@ export const AIAssistant = () => {
               className="border-t border-border p-3"
             >
               <div className="flex items-center gap-2 rounded-xl border border-border bg-card p-2">
+                {/* Microphone */}
                 <button
                   type="button"
                   onClick={startListening}
@@ -397,6 +657,7 @@ export const AIAssistant = () => {
                   )}
                 </button>
 
+                {/* Text input */}
                 <input
                   value={input}
                   onChange={(event) =>
@@ -410,9 +671,13 @@ export const AIAssistant = () => {
                   className="min-w-0 flex-1 bg-transparent px-1 text-sm outline-none placeholder:text-muted-foreground"
                 />
 
+                {/* Send */}
                 <button
                   type="submit"
-                  disabled={!input.trim() || isThinking}
+                  disabled={
+                    !input.trim() ||
+                    isThinking
+                  }
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground transition-all hover:scale-105 disabled:cursor-not-allowed disabled:opacity-40"
                   aria-label="Send message"
                 >
@@ -425,7 +690,9 @@ export const AIAssistant = () => {
             <div className="flex items-center justify-center gap-1 border-t border-border px-3 py-2">
               <button
                 type="button"
-                onClick={() => scrollToSection("experience")}
+                onClick={() =>
+                  scrollToSection("experience")
+                }
                 className="rounded-full px-2 py-1 text-[11px] text-muted-foreground hover:text-primary"
               >
                 Experience
@@ -433,7 +700,9 @@ export const AIAssistant = () => {
 
               <button
                 type="button"
-                onClick={() => scrollToSection("skills")}
+                onClick={() =>
+                  scrollToSection("skills")
+                }
                 className="rounded-full px-2 py-1 text-[11px] text-muted-foreground hover:text-primary"
               >
                 Skills
@@ -441,7 +710,9 @@ export const AIAssistant = () => {
 
               <button
                 type="button"
-                onClick={() => scrollToSection("projects")}
+                onClick={() =>
+                  scrollToSection("projects")
+                }
                 className="rounded-full px-2 py-1 text-[11px] text-muted-foreground hover:text-primary"
               >
                 Projects
@@ -449,7 +720,9 @@ export const AIAssistant = () => {
 
               <button
                 type="button"
-                onClick={() => scrollToSection("contact")}
+                onClick={() =>
+                  scrollToSection("contact")
+                }
                 className="rounded-full px-2 py-1 text-[11px] text-muted-foreground hover:text-primary"
               >
                 Contact
